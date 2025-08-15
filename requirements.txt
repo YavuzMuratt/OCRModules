@@ -1,0 +1,10 @@
+opencv-python
+Pillow
+numpy
+pytesseract
+easyocr
+paddlepaddle-gpu
+paddleocr
+matplotlib
+seaborn
+tqdm
