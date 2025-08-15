@@ -19,7 +19,6 @@ from modules.preprocessor import ImagePreprocessor
 from modules.roi_selector import ROISelector
 from modules.ocr_models.tesseract_ocr import TesseractOCR
 from modules.ocr_models.easy_ocr import EasyOCRModel
-from modules.ocr_models.paddle_ocr import PaddleOCRModel
 
 class OCRMods:
     """Ana OCR sistemi sınıfı"""
@@ -34,7 +33,7 @@ class OCRMods:
         self.ocr_models = {
             'tesseract': TesseractOCR(),
             'easyocr': EasyOCRModel(),
-            'paddleocr': PaddleOCRModel()
+            'paddleocr': 'paddleocr_runner'  # Özel script ile çalışır
         }
         
         # Sonuçlar klasörü
@@ -78,11 +77,42 @@ class OCRMods:
                 if 0 <= choice_idx < len(available_models):
                     selected_model = available_models[choice_idx]
                     print(f"Seçilen model: {selected_model.upper()}")
+                    
+                    # PaddleOCR seçildiğinde özel script'i çalıştır
+                    if selected_model == 'paddleocr':
+                        print("\nPaddleOCR seçildi! Özel PaddleOCR script'i başlatılıyor...")
+                        self.run_paddleocr_script()
+                        return None  # Ana döngüden çık
+                    
                     return selected_model
                 else:
                     print("Geçersiz seçim! Tekrar deneyin.")
             except ValueError:
                 print("Lütfen bir sayı girin!")
+                
+    def run_paddleocr_script(self):
+        """PaddleOCR özel script'ini çalıştırır"""
+        try:
+            import subprocess
+            script_path = "paddleocr_runner.py"
+            
+            if not os.path.exists(script_path):
+                print(f"✗ {script_path} bulunamadı!")
+                return
+                
+            print("PaddleOCR Runner başlatılıyor...")
+            print("=" * 50)
+            
+            # Script'i çalıştır
+            result = subprocess.run([sys.executable, script_path])
+            
+            if result.returncode == 0:
+                print("\nPaddleOCR Runner başarıyla tamamlandı!")
+            else:
+                print(f"\nPaddleOCR Runner hatası: {result.returncode}")
+                
+        except Exception as e:
+            print(f"PaddleOCR script çalıştırma hatası: {str(e)}")
                 
     def ask_preprocessing(self) -> bool:
         """Kullanıcıya ön işleme sorar"""
@@ -286,6 +316,10 @@ class OCRMods:
         
         # Model seçimi
         selected_model = self.select_model()
+        
+        # PaddleOCR seçildiyse ana döngüden çık
+        if selected_model is None:
+            return
         
         # Modelleri başlat
         self.initialize_models(selected_model)

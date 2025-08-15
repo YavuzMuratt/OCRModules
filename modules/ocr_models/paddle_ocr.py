@@ -1,143 +1,85 @@
 import cv2
 import numpy as np
-from paddleocr import PaddleOCR
+import os
+import time
 from typing import List, Dict, Any
 from .base_ocr import BaseOCR
 
 class PaddleOCRModel(BaseOCR):
-    """PaddleOCR modeli"""
+    """PaddleOCR modeli - Doğrudan import ile çalışır"""
     
     def __init__(self, use_gpu: bool = True, lang: str = 'en'):
         super().__init__("PaddleOCR")
         self.use_gpu = use_gpu
         self.lang = lang
         self.ocr = None
+        self.is_initialized = False
         
     def initialize(self, **kwargs):
-        """PaddleOCR modelini başlatır"""
+        """PaddleOCR'ı başlatır"""
         try:
-            # GPU kullanımını ayarla
-            use_gpu = kwargs.get('use_gpu', self.use_gpu)
-            lang = kwargs.get('lang', self.lang)
+            print("PaddleOCR başlatılıyor...")
             
-            # PaddleOCR'ı yeni API ile başlat (arkadaşınızın scriptindeki gibi)
-            device = "gpu:0" if use_gpu else "cpu"
-            self.ocr = PaddleOCR(
-                use_doc_orientation_classify=False,
-                use_doc_unwarping=False,
-                use_textline_orientation=False,
-                device=device,
-                lang=lang
-            )
+            # PaddleOCR import et
+            from paddleocr import PaddleOCR
+            
+            # CPU modunda başlat (CUDA DLL sorunu nedeniyle)
+            self.ocr = PaddleOCR(use_angle_cls=True, lang=self.lang, device="cpu")
             
             # Test için basit bir OCR işlemi yap
             test_image = np.zeros((100, 100), dtype=np.uint8)
-            # Yeni API ile test
-            try:
-                self.ocr.predict(input=test_image)
-            except:
-                # Eski API ile test
-                self.ocr.ocr(test_image)
+            self.ocr.ocr(test_image)
             
             # Model değişkenini set et (BaseOCR.is_model_ready() için)
             self.model = self.ocr
             self.is_initialized = True
-            print(f"✓ {self.model_name} başarıyla başlatıldı (Device: {device}, Lang: {lang})")
+            print("✓ PaddleOCR başarıyla başlatıldı (CPU)")
+            return True
             
         except Exception as e:
-            print(f"✗ {self.model_name} başlatılamadı: {str(e)}")
-            self.is_initialized = False
+            print(f"✗ PaddleOCR başlatma hatası: {str(e)}")
+            print("PaddleOCR kullanılamıyor, diğer modeller kullanılabilir.")
+            return False
             
     def extract_text(self, image: np.ndarray) -> List[Dict[str, Any]]:
         """Görüntüden metin çıkarır"""
-        if not self.is_model_ready():
+        if not self.is_initialized:
             raise RuntimeError(f"{self.model_name} henüz başlatılmamış!")
             
         try:
             # Görüntüyü ön işle
             processed_image = self.preprocess_for_model(image)
             
-            # Önce yeni API'yi dene
-            try:
-                predict_result = self.ocr.predict(input=processed_image)
-                formatted_results = self._parse_predict_result(predict_result)
-            except:
-                # Eski API'yi dene
-                results = self.ocr.ocr(processed_image, cls=True)
-                formatted_results = self._parse_legacy_result(results)
-                        
+            # OCR işlemi
+            results = self.ocr.ocr(processed_image)
+            
+            # Sonuçları formatla
+            formatted_results = []
+            if results and results[0]:
+                for line in results[0]:
+                    bbox, (text, confidence) = line
+                    
+                    # Bbox formatını düzenle
+                    bbox_array = np.array(bbox)
+                    x_coords = bbox_array[:, 0]
+                    y_coords = bbox_array[:, 1]
+                    
+                    x1, y1 = int(min(x_coords)), int(min(y_coords))
+                    x2, y2 = int(max(x_coords)), int(max(y_coords))
+                    
+                    result = {
+                        'text': text,
+                        'confidence': confidence * 100,
+                        'bbox': [x1, y1, x2, y2],
+                        'bbox_xywh': [x1, y1, x2 - x1, y2 - y1]
+                    }
+                    formatted_results.append(result)
+                    
             return self.postprocess_results(formatted_results)
             
         except Exception as e:
             print(f"PaddleOCR hatası: {str(e)}")
             return []
-            
-    def _parse_predict_result(self, predict_result: List) -> List[Dict[str, Any]]:
-        """Yeni predict() API sonuçlarını parse eder"""
-        formatted_results = []
-        
-        try:
-            for res in predict_result:
-                # OCRResult objesinden metin ve koordinatları çıkar
-                if hasattr(res, 'text_lines') and isinstance(res.text_lines, (list, tuple)):
-                    for line in res.text_lines:
-                        if isinstance(line, dict):
-                            text = line.get('transcription') or line.get('text') or line.get('label', '')
-                            confidence = line.get('confidence', 0.0) * 100
-                            bbox = line.get('bbox', [])
-                            
-                            if text and bbox:
-                                # Bbox formatını düzenle
-                                bbox_array = np.array(bbox)
-                                x_coords = bbox_array[:, 0]
-                                y_coords = bbox_array[:, 1]
-                                
-                                x1, y1 = int(min(x_coords)), int(min(y_coords))
-                                x2, y2 = int(max(x_coords)), int(max(y_coords))
-                                
-                                result = {
-                                    'text': str(text),
-                                    'confidence': confidence,
-                                    'bbox': [x1, y1, x2, y2],
-                                    'bbox_xywh': [x1, y1, x2 - x1, y2 - y1]
-                                }
-                                formatted_results.append(result)
-                                
-        except Exception as e:
-            print(f"Predict result parsing hatası: {str(e)}")
-            
-        return formatted_results
-        
-    def _parse_legacy_result(self, results: List) -> List[Dict[str, Any]]:
-        """Eski ocr() API sonuçlarını parse eder"""
-        formatted_results = []
-        
-        try:
-            if results and results[0]:
-                for line in results[0]:
-                    if line:
-                        bbox, (text, confidence) = line
-                        
-                        # Bbox formatını düzenle
-                        bbox_array = np.array(bbox)
-                        x_coords = bbox_array[:, 0]
-                        y_coords = bbox_array[:, 1]
-                        
-                        x1, y1 = int(min(x_coords)), int(min(y_coords))
-                        x2, y2 = int(max(x_coords)), int(max(y_coords))
-                        
-                        result = {
-                            'text': text,
-                            'confidence': confidence * 100,  # Yüzdeye çevir
-                            'bbox': [x1, y1, x2, y2],
-                            'bbox_xywh': [x1, y1, x2 - x1, y2 - y1]
-                        }
-                        formatted_results.append(result)
-                        
-        except Exception as e:
-            print(f"Legacy result parsing hatası: {str(e)}")
-            
-        return formatted_results
             
     def draw_results(self, image: np.ndarray, results: List[Dict[str, Any]]) -> np.ndarray:
         """Sonuçları görüntü üzerine çizer"""
@@ -151,25 +93,17 @@ class PaddleOCRModel(BaseOCR):
             if len(bbox) == 4:
                 x1, y1, x2, y2 = bbox
                 
-                # Bounding box çiz
-                cv2.rectangle(result_image, (x1, y1), (x2, y2), (0, 0, 255), 2)
+                # Poligon çiz
+                pts = np.array([[x1, y1], [x2, y1], [x2, y2], [x1, y2]], np.int32)
+                cv2.polylines(result_image, [pts], isClosed=True, color=(255, 128, 0), thickness=2)
                 
                 # Metin ve güven bilgisini yaz
                 label = f"{text} ({confidence:.1f}%)"
                 cv2.putText(result_image, label, (x1, y1 - 10), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 128, 0), 2)
                 
         return result_image
         
     def preprocess_for_model(self, image: np.ndarray) -> np.ndarray:
         """PaddleOCR için özel ön işleme"""
-        # PaddleOCR genellikle ham görüntülerle iyi çalışır
-        # Sadece temel iyileştirmeler yap
-        if len(image.shape) == 3:
-            # BGR'den RGB'ye çevir
-            rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-            return rgb_image
-        else:
-            # Gri tonlamayı RGB'ye çevir
-            rgb_image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
-            return rgb_image
+        return image.copy()
