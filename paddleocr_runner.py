@@ -3,6 +3,7 @@
 """
 PaddleOCR Runner - Modüler OCR Sistemi için PaddleOCR Özel Script'i
 Tüm modüler özellikleri içerir: Timer, Logger, Preprocessor, ROI Selector
+GPU hızlandırma desteği ile
 """
 
 import os
@@ -19,8 +20,30 @@ from modules.logger import OCRLogger
 from modules.preprocessor import ImagePreprocessor
 from modules.roi_selector import ROISelector
 
+def check_gpu_availability():
+    """GPU kullanılabilirliğini kontrol eder"""
+    try:
+        import paddle
+        # PaddlePaddle GPU desteğini kontrol et
+        if paddle.is_compiled_with_cuda():
+            print("✓ PaddlePaddle CUDA desteği mevcut")
+            # GPU sayısını kontrol et
+            gpu_count = paddle.device.cuda.device_count()
+            if gpu_count > 0:
+                print(f"✓ {gpu_count} GPU bulundu")
+                return True, gpu_count
+            else:
+                print("⚠ CUDA desteği var ama GPU bulunamadı")
+                return False, 0
+        else:
+            print("✗ PaddlePaddle CUDA desteği yok")
+            return False, 0
+    except Exception as e:
+        print(f"⚠ GPU kontrol hatası: {e}")
+        return False, 0
+
 class PaddleOCRRunner:
-    """PaddleOCR için özel runner sınıfı"""
+    """PaddleOCR için özel runner sınıfı - GPU hızlandırma desteği ile"""
     
     def __init__(self):
         self.timer = PerformanceTimer()
@@ -28,6 +51,8 @@ class PaddleOCRRunner:
         self.roi_selector = ROISelector()
         self.logger = None
         self.ocr = None
+        self.gpu_available = False
+        self.gpu_count = 0
         
         # Sonuçlar klasörü
         self.results_dir = "results"
@@ -38,16 +63,29 @@ class PaddleOCRRunner:
         try:
             print("PaddleOCR başlatılıyor...")
             
+            # GPU kullanılabilirliğini kontrol et
+            self.gpu_available, self.gpu_count = check_gpu_availability()
+            
             # PaddleOCR import et
             from paddleocr import PaddleOCR
             
-            # PaddleOCR 3.x parametreleri ile başlat
-            self.ocr = PaddleOCR(
-                use_doc_orientation_classify=False,
-                use_doc_unwarping=False,
-                use_textline_orientation=False,
-                device="cpu"  # CUDA DLL sorunu nedeniyle CPU
-            )
+            # GPU kullanılabilirse GPU ile başlat
+            if self.gpu_available:
+                print(f"GPU modunda başlatılıyor (GPU:0)...")
+                self.ocr = PaddleOCR(
+                    use_doc_orientation_classify=False,
+                    use_doc_unwarping=False,
+                    use_textline_orientation=False,
+                    device="gpu:0"
+                )
+            else:
+                print("CPU modunda başlatılıyor...")
+                self.ocr = PaddleOCR(
+                    use_doc_orientation_classify=False,
+                    use_doc_unwarping=False,
+                    use_textline_orientation=False,
+                    device="cpu"
+                )
             
             # Test için basit bir OCR işlemi yap (güvenli şekilde)
             test_image_path = "test_image.png"
@@ -70,7 +108,8 @@ class PaddleOCRRunner:
                 if os.path.exists(test_image_path):
                     os.remove(test_image_path)
             
-            print("✓ PaddleOCR başarıyla başlatıldı (CPU)")
+            device_info = "GPU" if self.gpu_available else "CPU"
+            print(f"✓ PaddleOCR başarıyla başlatıldı ({device_info})")
             return True
             
         except Exception as e:
